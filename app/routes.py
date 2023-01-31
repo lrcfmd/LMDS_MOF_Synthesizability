@@ -5,14 +5,17 @@ import joblib
 import pandas as pd
 from logging.config import dictConfig
 from rdkit import Chem
+import rdkit
+from rdkit.Chem import AllChem
 from jinja2 import BaseLoader, TemplateNotFound,ChoiceLoader, FileSystemLoader
 from urllib import request, parse
 from flask import render_template
 from ElMD import ElMD
 from mordred import Calculator, descriptors
 from app import app
+import torch
 from app.forms import SearchForm
-
+from app.Encoder import deepSVDD, build_network, build_autoencoder
 #We split loading of templates between local and remote as common templates
 #For LMDS are hosted seperately to reduce code duplication
 #Thus we define a quick class to use to fetch these remotely
@@ -34,23 +37,39 @@ class UrlLoader(BaseLoader):
 app.jinja_loader = ChoiceLoader([app.jinja_loader, UrlLoader("https://lmds.liverpool.ac.uk/static")])
 
 #Set up featurisers and scalers
-calc = Calculator(descriptors, ignore_3D=True)
-descriptors = ['ABC', 'SpAbs_A', 'SpAD_A', 'nAromAtom', 'nAromBond', 'nC', 'ATS1dv',
-       'VR2_DzZ', 'VR2_Dhome/samantha/anaconda3/bin/pythonzm', 'VR2_Dzv', 'VR2_Dzse', 'VR2_Dzpe', 'VR2_Dzare',
-       'VR2_Dzp', 'VR2_Dzi', 'BertzCT', 'nBondsO', 'nBondsA', 'nBondsM',
-       'nBondsKD', 'C3SP2', 'Xp-1d', 'Xp-3d', 'Xp-4d', 'Xp-5d', 'Xp-6d',
-       'Xp-7d', 'VR2_Dt', 'VR2_D', 'NaaCH', 'NaasC', 'ETA_beta', 'ETA_beta_ns',
-       'ETA_eta_RL', 'ETA_eta_FL', 'PEOE_VSA7', 'SMR_VSA7', 'SlogP_VSA6',
-       'MID', 'MID_C', 'MPC2', 'MPC3', 'TpiPC10', 'nRing', 'n6Ring', 'naRing',
-       'n6aRing', 'MWC01', 'Zagreb1', 'Zagreb2']
-elements = pd.read_csv('app/elemental_descriptors.csv',index_col='Symbol').drop('Name',axis=1)
-scaler = joblib.load("app/scaler.joblib")
-metal_scaler = joblib.load("app/metal_scaler.joblib")
+
+
+device = 'cpu'
+def score(deep_SVDD, X):
+    with torch.no_grad():
+        net = deep_SVDD.net.to(device)
+        X = torch.FloatTensor(X).to(device)
+        y = net(X)
+        c, R = torch.FloatTensor([deep_SVDD.c]).to(device), torch.FloatTensor([deep_SVDD.R]).to(device)
+        dist = torch.sum((y - c)**2, dim=1)
+        if deep_SVDD.objective == 'soft-boundary':
+            scores = dist - R ** 2
+        else:
+            scores = dist
+    return scores
+
+lunar_scaler = joblib.load("app/lunar_scaler.joblib")
+lof_scaler = joblib.load("app/lof_scaler.joblib")
+deep_scaler = joblib.load("app/deep_scaler.joblib")
 
 # Load models
-m1 = joblib.load("app/model_M1.joblib")
-m2 = joblib.load("app/model_M2.joblib")
-m3 = joblib.load("app/model_M3.joblib")
+net_name = 'mof_Net'
+clf_deep = deepSVDD.DeepSVDD()
+clf_deep.net = build_network(net_name)
+clf_deep.ae_net = build_autoencoder(net_name)
+clf_deep.net_name = net_name
+clf_deep.load_model(model_path='app/deep_model.tar')
+
+clf_lunar = joblib.load('app/clf_LUNAR.joblib')
+clf_lof = joblib.load('app/clf_LOF.joblib')
+
+metal_scaled = pd.read_csv('app/metal_scaled.csv')
+metal_scaled = metal_scaled.set_index('Symbol')
 
 #Configure logging
 dictConfig({"version": 1,
@@ -78,56 +97,61 @@ def predict():
     if form.validate_on_submit():
         try:
             #Parse strings
-            linkers = [smiles.strip() for smiles in re.split(',|, | ',str(form.linker.data)) \
-                          if smiles != ""]
-            metals = [metals.strip() for metals in re.split(',|, | ',str(form.metal.data)) \
-                          if metals != ""]
-            #Load and scale metal descriptors
-            metal_descriptors = elements.loc[metals][['Atomic_Number','Atomic_Weight','Atomic Radius','Mulliken EN','polarizability(A^3)','electron affinity(kJ/mol)']].reset_index(drop=True)
-            metal_descriptors = pd.DataFrame(metal_scaler.transform(metal_descriptors), columns=metal_descriptors.columns)
+            linker = [smiles.strip() for smiles in re.split(',|, | ',str(form.linker.data)) \
+                          if smiles != ""][0]
+            metal = [metals.strip() for metals in re.split(',|, | ',str(form.metal.data)) \
+                          if metals != ""][0]
+            
+            app.logger.debug("Linker:")
+            app.logger.debug(linker)
+            app.logger.debug("Metal:")
+            app.logger.debug(metal)
             #Load and scale linker descriptors
-            results = []
-            for linker in linkers:
-                mol = Chem.MolFromSmiles(linker)
-                results.append(calc(mol).asdict())
-            results = pd.DataFrame(results)
-            scaled_linker_descriptors = pd.DataFrame(scaler.transform(results), columns=results.columns)[descriptors]
-            scaled_linker_descriptors = scaled_linker_descriptors.fillna(0.0)
+            metal_df = metal_scaled.loc[metal,:]
+            
+            mol = Chem.MolFromSmiles(linker)
+            linker_modified = Chem.MolToSmiles(mol)
+            fpts = AllChem.GetMorganFingerprintAsBitVect(mol,2,256)
+            linker_df = np.array(fpts) # linker features to be used in lof&lunar
+            fpts_dl = AllChem.GetMorganFingerprintAsBitVect(mol,2,2048)
+            linker_df_dl = np.array(fpts_dl) # linker features to be used in deep model
 
-            #Deal with functionality of matching metals to linkers
-            if len(metal_descriptors) == 1:
-                metals = metals * len(scaled_linker_descriptors)
-                metal_descriptors = pd.concat([metal_descriptors]*len(scaled_linker_descriptors), axis=0)
-                metal_descriptors.index = scaled_linker_descriptors.index
-            elif len(scaled_linker_descriptors) == 1:
-                linkers = linkers * len(metals)
-                scaled_linker_descriptors = pd.concat([scaled_linker_descriptors]*len(metal_descriptors), axis=0)
-                scaled_linker_descriptors.index = metal_descriptors.index
+            # concatenate metal features & linker features
+            df = np.concatenate((metal_df.to_numpy(), linker_df)) # to be used in lof&lunar
+            df_dl = np.concatenate((metal_df.to_numpy(), linker_df_dl)) # to be used in deep model
+            
 
-            #merge metal and linker descriptions
-            all_descs = scaled_linker_descriptors.merge(metal_descriptors,  left_index=True, right_index=True)
+            output_lof = clf_lof.decision_function(df.reshape(1,-1))*(-1)
+            output_lof = lof_scaler.transform(output_lof.reshape(-1,1)) 
+            output_lof = np.round(output_lof[0][0], 3)
+            output_lof_predict = output_lof > 0.703
+
+            # lunar model prediction & normalization
+
+            output_lunar = clf_lunar.decision_function(df.reshape(1,-1))*(-1)
+            output_lunar = lunar_scaler.transform(output_lunar.reshape(-1,1)) 
+            output_lunar = np.round(output_lunar[0][0], 3)
+            output_lunar_predict = output_lunar > 0.552
+
+            # deep model prediction & normalization
+            output_deep = score(clf_deep, df_dl.reshape(1,-1)).cpu().detach().numpy()*(-1)
+            output_deep = deep_scaler.transform(output_deep.reshape(-1,1)) 
+            output_deep = np.round(output_deep[0][0], 3)
+            output_deep_predict = output_deep > 0.800
+            
             # Process predictions
-            m1_preds = m1.predict(all_descs)
-            m2_preds = m2.predict(all_descs)
-            m3_preds = m3.predict(all_descs)
             #Format output
-            prediction_texts = []
-            for i in range(len(metals)):
-                 if not m1_preds[i]:
-                     prediction = "porosity < 2.4 Å"
-                 elif not m2_preds[i]:
-                     prediction = "2.4Å < porosity < 4.4Å"
-                 elif not m3_preds[i]:
-                     prediction = "4.4Å < porosity <5.9Å"
-                 else:
-                     prediction = "porosity<5.9 Å"
-                 prediction_texts.append(prediction)
-            results = zip(linkers, metals, m1_preds, m2_preds, m3_preds, prediction_texts)
-
-            return render_template("MOF_ml.html", form=form, results=results)
+            
+            scores = (output_lof, output_lunar, output_deep)
+            predictions = (output_lof_predict, output_lunar_predict, output_deep_predict)
+                       
+            app.logger.debug(scores)
+            app.logger.debug(predictions)
+            return render_template("MOF_ml.html", form=form, scores=scores, predictions=predictions)
 
         except Exception as e:
-            return render_template("MOF_ml.html", form=form, message="Failed to process input, check it is properly formatted")
             app.logger.debug(e)
+            return render_template("MOF_ml.html", form=form, message="Failed to process input, check it is properly formatted")
+            
 
     return render_template("MOF_ml.html", form=form)
