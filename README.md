@@ -1,4 +1,4 @@
-# Machine Learning Prediction of Metal Organic Framework Porosity
+# Machine Learning Prediction of Metal Organic Framework Synthesizability
 
 A [Flask](https://flask.palletsprojects.com/en/2.2.x/) web app hosting a model produced for the prediction of Metal organic framework (MOF) synthesizability.
 
