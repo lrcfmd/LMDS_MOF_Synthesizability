@@ -124,20 +124,20 @@ def predict():
             output_lof = clf_lof.decision_function(df.reshape(1,-1))*(-1)
             output_lof = lof_scaler.transform(output_lof.reshape(-1,1)) 
             output_lof = np.round(output_lof[0][0], 3)
-            output_lof_predict = output_lof > 0.703
+            output_lof_predict = output_lof > 0.81
 
             # lunar model prediction & normalization
 
             output_lunar = clf_lunar.decision_function(df.reshape(1,-1))*(-1)
             output_lunar = lunar_scaler.transform(output_lunar.reshape(-1,1)) 
             output_lunar = np.round(output_lunar[0][0], 3)
-            output_lunar_predict = output_lunar > 0.552
+            output_lunar_predict = output_lunar > 0.55
 
             # deep model prediction & normalization
             output_deep = score(clf_deep, df_dl.reshape(1,-1)).cpu().detach().numpy()*(-1)
             output_deep = deep_scaler.transform(output_deep.reshape(-1,1)) 
             output_deep = np.round(output_deep[0][0], 3)
-            output_deep_predict = output_deep > 0.800
+            output_deep_predict = output_deep > 0.86
             
             # Process predictions
             #Format output
