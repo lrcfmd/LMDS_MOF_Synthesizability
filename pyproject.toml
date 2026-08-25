@@ -1,0 +1,60 @@
+[project]
+name = "mof-synthesizability"
+version = "1.0.0"
+description = "Machine-learning prediction of metal-organic framework synthesizability for the LMDS platform"
+readme = "README.md"
+# Pinned to 3.11: the LOF/LUNAR/scaler pickles were saved with scikit-learn
+# 1.2.0, whose format is unreadable by sklearn >= 1.3, and 1.2.x has no cp312
+# wheels. 3.11 is the newest interpreter that runs the training-time stack.
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "jsonschema>=4.26.0",
+    "boto3>=1.34.0",
+    "structlog>=25.5.0",
+    # Scientific stack pinned to the models' training-time versions so
+    # predictions are faithful to the published models. Do not bump
+    # scikit-learn/torch/pyod without re-saving the artifacts.
+    "scikit-learn==1.2.0",
+    "numpy>=1.24,<2",
+    "pandas>=1.5,<2.2",
+    "joblib>=1.2",
+    "torch==2.0.1",
+    "pyod==1.0.9",
+    "rdkit>=2023.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+model-run = "cmds.run:run_cli"
+model-types = "cmds.model_types:main"
+validate-model = "cmds.validate_model:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Model artifacts are NOT bundled in the wheel or image — they are provided to
+# the application at runtime (see src/model/artifacts/README.md). Exclude them
+# explicitly: the Docker build context has no .git, so VCS-ignore alone would
+# not keep the locally-present files out of the wheel.
+[tool.hatch.build.targets.wheel]
+packages = ["src/cmds", "src/infrastructure", "src/model"]
+exclude = ["src/model/artifacts/*"]
+
+# Resolve torch from the CPU-only index — the models run on CPU and the default
+# CUDA build would bloat the image by gigabytes.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[tool.uv]
+package = true

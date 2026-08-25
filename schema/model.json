@@ -1,0 +1,76 @@
+{
+  "$schema": "./model.schema.json",
+  "name": "mof-synthesizability",
+  "version": "1.0.0",
+
+  "parameters": {},
+
+  "execution": {
+    "modes": {
+      "instance": {
+        "description": "Predict the synthesizability of a single MOF from a linker SMILES and a metal symbol, using three anomaly-detection models (LOF, LUNAR, Deep SVDD). Returns each model's normalised score and its synthesizable/not verdict.",
+        "response": "immediate",
+        "inputs": {
+          "linker": {
+            "type": "string",
+            "required": true,
+            "description": "SMILES string of the organic linker"
+          },
+          "metal": {
+            "type": "string",
+            "required": true,
+            "description": "Elemental symbol of the metal, e.g. Zn, Cu, Fe (must be one of the supported metals)"
+          }
+        },
+        "outputs": {
+          "linker": { "type": "string", "description": "Canonical linker SMILES used" },
+          "metal": { "type": "string", "description": "Metal symbol used" },
+          "lof": {
+            "type": "object",
+            "description": "Local Outlier Factor model result",
+            "properties": {
+              "score": { "type": "number", "description": "Normalised synthesizability score (0-1)" },
+              "synthesizable": { "type": "boolean", "description": "score > 0.81" }
+            }
+          },
+          "lunar": {
+            "type": "object",
+            "description": "LUNAR model result",
+            "properties": {
+              "score": { "type": "number", "description": "Normalised synthesizability score (0-1)" },
+              "synthesizable": { "type": "boolean", "description": "score > 0.55" }
+            }
+          },
+          "deep_svdd": {
+            "type": "object",
+            "description": "Deep SVDD (set-transformer) model result",
+            "properties": {
+              "score": { "type": "number", "description": "Normalised synthesizability score (0-1)" },
+              "synthesizable": { "type": "boolean", "description": "score > 0.86" }
+            }
+          }
+        }
+      },
+
+      "dataset": {
+        "description": "Batch-predict MOF synthesizability from a CSV of linker,metal pairs (one MOF per row). Produces a downloadable CSV of per-model scores and verdicts.",
+        "response": "deferred",
+        "inputs": {
+          "file": {
+            "type": "file",
+            "mime_type": "text/csv",
+            "required": true,
+            "description": "CSV with 'linker' and 'metal' columns, one MOF per row"
+          }
+        },
+        "outputs": {
+          "predictions.csv": {
+            "type": "file",
+            "mime_type": "text/csv",
+            "description": "Input rows augmented with each model's score and synthesizable verdict"
+          }
+        }
+      }
+    }
+  }
+}

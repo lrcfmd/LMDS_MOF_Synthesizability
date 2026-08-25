@@ -1,0 +1,8 @@
+{
+  "mode": "instance",
+  "inputs": {
+    "linker": { "value": "O=C(O)c1ccc(cc1)C(=O)O" },
+    "metal": { "value": "Zn" }
+  },
+  "parameters": {}
+}

@@ -1,0 +1,5 @@
+linker,metal
+O=C(O)c1ccc(cc1)C(=O)O,Zn
+O=C(O)c1ccc(cc1)C(=O)O,Cu
+c1cc(cc(c1)C(=O)O)C(=O)O,Fe
+O=C(O)c1cccc(c1)C(=O)O,Al
