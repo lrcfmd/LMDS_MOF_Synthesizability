@@ -3,6 +3,51 @@
   "name": "mof-synthesizability",
   "version": "1.0.0",
 
+  "assets": {
+    "artifacts/clf_LOF.joblib": {
+      "type": "file",
+      "mime_type": "application/octet-stream",
+      "required": true,
+      "description": "pyod Local Outlier Factor classifier"
+    },
+    "artifacts/clf_LUNAR.joblib": {
+      "type": "file",
+      "mime_type": "application/octet-stream",
+      "required": true,
+      "description": "pyod LUNAR classifier (PyTorch-backed)"
+    },
+    "artifacts/deep_model.tar": {
+      "type": "file",
+      "mime_type": "application/octet-stream",
+      "required": true,
+      "description": "Deep SVDD set-transformer checkpoint ({R, c, net_dict, ae_net_dict})"
+    },
+    "artifacts/lof_scaler.joblib": {
+      "type": "file",
+      "mime_type": "application/octet-stream",
+      "required": true,
+      "description": "MinMax scaler for the LOF score"
+    },
+    "artifacts/lunar_scaler.joblib": {
+      "type": "file",
+      "mime_type": "application/octet-stream",
+      "required": true,
+      "description": "MinMax scaler for the LUNAR score"
+    },
+    "artifacts/deep_scaler.joblib": {
+      "type": "file",
+      "mime_type": "application/octet-stream",
+      "required": true,
+      "description": "MinMax scaler for the Deep SVDD score"
+    },
+    "artifacts/metal_scaled.csv": {
+      "type": "file",
+      "mime_type": "text/csv",
+      "required": true,
+      "description": "Pre-scaled metal descriptors, indexed by element Symbol"
+    }
+  },
+
   "parameters": {},
 
   "execution": {

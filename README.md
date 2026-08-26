@@ -40,22 +40,24 @@ fixed, model-calibrated threshold (LOF > 0.81, LUNAR > 0.55, Deep SVDD > 0.86).
 Only the metals present in the `metal_scaled.csv` artifact are supported; an
 unsupported metal or invalid SMILES raises an error.
 
-## Model artifacts (provided at runtime)
+## Model artifacts (runtime assets)
 
 The ~133 MB of model files (LOF/LUNAR classifiers, the Deep SVDD checkpoint, the
-score scalers and the metal descriptor table) are **not committed to git**. They
-are provided to the application at runtime; the repo tracks only a placeholder
-and a manifest at [`src/model/artifacts/`](src/model/artifacts/README.md).
+score scalers and the metal descriptor table) are **not committed to git** and
+**not baked into the image**. They are declared as `assets` in
+`schema/model.json` and provided by the LMDS platform at run time:
 
-The model resolves the artifact directory from the `MODEL_ARTIFACTS_DIR`
-environment variable, falling back to `src/model/artifacts/` when unset. If any
-required file is missing it fails immediately with a message listing them.
+1. An admin uploads a file for each declared asset path under the version's
+   **Manage → Versions → Assets** page (only schema-declared paths are accepted).
+2. On each run, the runner downloads the assets from S3 to their declared paths
+   under the container WORKDIR (`./artifacts/…`) before the handler executes.
 
-- **Local development:** put the files directly in `src/model/artifacts/`
-  (the default location); everything then runs as normal.
-- **Container / deployment:** the image does not bundle the files. Mount them at
-  runtime — the image defaults `MODEL_ARTIFACTS_DIR=/models`, so
-  `-v /path/to/models:/models` is enough (or set the env var to another path).
+The model reads them from `./artifacts/` (the package's `artifacts/` dir is the
+fallback for a local source checkout; `MODEL_ARTIFACTS_DIR` overrides both), and
+fails fast with a clear message if any required file is missing.
+
+**Local development:** put the files in `src/model/artifacts/`; everything runs
+as normal.
 
 See [`src/model/artifacts/README.md`](src/model/artifacts/README.md) for the
 full file manifest.
@@ -118,13 +120,14 @@ See `data/instance.json` / `data/dataset.json` for full example payloads.
 ```bash
 docker build -t mof-synthesizability:1.0.0 .
 
-# Model artifacts are provided at runtime — mount them at /models (the image's
-# default MODEL_ARTIFACTS_DIR). Instance mode needs no data volume otherwise.
-docker run --rm -v /path/to/models:/models mof-synthesizability:1.0.0 --local \
+# On the platform the runner downloads the declared assets to ./artifacts before
+# running. To run the image by hand, put the model files where the runner would
+# — mount them at /app/artifacts — and the model reads them from there:
+docker run --rm -v /path/to/artifacts:/app/artifacts:ro mof-synthesizability:1.0.0 --local \
   --parameters '{"mode":"instance","inputs":{"linker":{"value":"O=C(O)c1ccc(cc1)C(=O)O"},"metal":{"value":"Zn"}},"parameters":{}}'
 ```
 
-Without the models mounted the container exits immediately with a message
+Without the models present the container exits immediately with a message
 listing the missing files. Runs on **Python 3.11** (required, see above). The
 image is ~2.5 GB — inherent to a PyTorch + RDKit + pyod inference stack even
 with CPU-only torch and the model files kept outside the image.

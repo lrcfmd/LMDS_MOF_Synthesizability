@@ -23,6 +23,14 @@
       "description": "Semantic version string (e.g. 1.0.0). Auto-generated if not provided."
     },
 
+    "assets": {
+      "type": "object",
+      "description": "Runtime files required by the model at execution time, such as pre-trained weights or lookup tables. Keys are target paths relative to the container WORKDIR; values are file-typed field declarations. Assets are immutable per ToolVersion.",
+      "additionalProperties": {
+        "$ref": "#/$defs/field"
+      }
+    },
+
     "parameters": {
       "type": "object",
       "description": "Model-level configuration shared across all Modes — hyperparameters set once.",

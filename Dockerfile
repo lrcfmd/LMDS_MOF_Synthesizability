@@ -13,16 +13,18 @@ RUN uv build --wheel
 
 # Stage 2: Minimal runtime image
 FROM python:${PYTHON_VERSION}-slim
+RUN groupadd -r lmds && useradd -r -g lmds -u 1000 -m -d /home/lmds lmds
 WORKDIR /app
 COPY --from=builder /app/dist/*.whl /app/
 # Install the CPU-only torch first so the wheel's torch==2.0.1 requirement is
 # satisfied by the CPU build rather than the default multi-GB CUDA wheel.
 RUN pip install --no-cache-dir torch==2.0.1 --index-url https://download.pytorch.org/whl/cpu \
- && pip install --no-cache-dir /app/*.whl
+ && pip install --no-cache-dir /app/*.whl && rm -f /app/*.whl
 
-# Model artifacts are NOT baked into the image — they are provided at runtime.
-# The application reads them from MODEL_ARTIFACTS_DIR; mount the models there
-# (e.g. `-v /path/to/models:/models`). See src/model/artifacts/README.md.
-ENV MODEL_ARTIFACTS_DIR=/models
-RUN mkdir -p /data/output /models
+# Model artifacts are NOT baked into the image — they are declared as `assets`
+# in schema/model.json and downloaded at run time by the runner to their paths
+# under the WORKDIR (./artifacts/…). The platform runs the container as uid
+# 1000, so /app (and /data/output, /home/lmds) must be writable by that user.
+RUN mkdir -p /data/output && chown -R 1000:1000 /app /data/output /home/lmds
+USER 1000:1000
 ENTRYPOINT ["model-run"]

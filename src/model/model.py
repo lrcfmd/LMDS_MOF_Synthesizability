@@ -12,14 +12,19 @@ from rdkit.Chem import AllChem
 from infrastructure.logging import newLogger
 from model.deep import INPUT_DIM, PairsEncoder
 
-# Model artifacts are NOT committed to git; they are provided to the application
-# at runtime. Resolve their directory from MODEL_ARTIFACTS_DIR (set by the
-# deployment, e.g. a mounted volume), falling back to the package's own
-# artifacts/ dir for running from a source checkout. See artifacts/README.md.
+# Model artifacts are NOT committed to git; they are declared as `assets` in
+# schema/model.json and provided at runtime. On the platform the runner
+# downloads them to their declared paths under the container WORKDIR
+# (./artifacts/…), so that is the primary location. For a local source checkout
+# the files live in the package's own artifacts/ dir. MODEL_ARTIFACTS_DIR
+# overrides both. See artifacts/README.md.
 def _artifacts_dir() -> Path:
     env = os.environ.get("MODEL_ARTIFACTS_DIR")
     if env:
         return Path(env)
+    workdir_assets = Path("artifacts")  # where the runner downloads assets
+    if workdir_assets.is_dir():
+        return workdir_assets
     return Path(__file__).resolve().parent / "artifacts"
 
 
