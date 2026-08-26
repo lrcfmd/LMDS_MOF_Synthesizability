@@ -24,7 +24,8 @@ RUN pip install --no-cache-dir torch==2.0.1 --index-url https://download.pytorch
 # Model artifacts are NOT baked into the image — they are declared as `assets`
 # in schema/model.json and downloaded at run time by the runner to their paths
 # under the WORKDIR (./artifacts/…). The platform runs the container as uid
-# 1000, so /app (and /data/output, /home/lmds) must be writable by that user.
-RUN mkdir -p /data/output && chown -R 1000:1000 /app /data/output /home/lmds
+# 1000; the runner also creates /data/input (file inputs) and /data/output
+# (results), so /app and all of /data (and /home/lmds) must be writable by it.
+RUN mkdir -p /data/input /data/output && chown -R 1000:1000 /app /data /home/lmds
 USER 1000:1000
 ENTRYPOINT ["model-run"]
