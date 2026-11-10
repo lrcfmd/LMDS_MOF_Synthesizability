@@ -12,7 +12,9 @@ COPY src/ ./src/
 # Install the exact locked dependency set from uv.lock plus the project into
 # /app/.venv. uv resolves torch from the CPU index (per pyproject [tool.uv]
 # config, as locked), so no manual CPU-torch install step is needed.
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-editable
+# --compile-bytecode: ship .pyc files, so each run (a fresh container, as
+# uid 1000 that cannot write them back) does not recompile every import.
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-editable --compile-bytecode
 
 # Stage 2: minimal runtime image (same base, so native libs match)
 FROM python:${PYTHON_VERSION}-slim
