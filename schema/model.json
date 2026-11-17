@@ -59,12 +59,13 @@
           "linker": {
             "type": "string",
             "required": true,
-            "description": "SMILES string of the organic linker"
+            "description": "SMILES string of the organic linker, e.g. O=C(O)c1ccc(cc1)C(=O)O"
           },
           "metal": {
             "type": "string",
             "required": true,
-            "description": "Elemental symbol of the metal, e.g. Zn, Cu, Fe (must be one of the supported metals)"
+            "description": "Element symbol of the metal (only metals the models were trained on)",
+            "enum": ["Ag", "Al", "Ba", "Be", "Bi", "Ca", "Cd", "Ce", "Co", "Cr", "Cs", "Cu", "Dy", "Er", "Eu", "Fe", "Ga", "Gd", "Hf", "Hg", "Ho", "In", "K", "La", "Li", "Lu", "Mg", "Mn", "Mo", "Na", "Nd", "Ni", "Pb", "Pr", "Rb", "Ru", "Sb", "Sc", "Sm", "Sn", "Sr", "Tb", "Th", "Ti", "Tl", "Tm", "U", "V", "W", "Y", "Yb", "Zn", "Zr"]
           }
         },
         "outputs": {
@@ -105,7 +106,21 @@
             "type": "file",
             "mime_type": "text/csv",
             "required": true,
-            "description": "CSV with 'linker' and 'metal' columns, one MOF per row"
+            "description": "CSV of MOFs, one per row: the linker SMILES and the metal's element symbol",
+            "header": true,
+            "columns": [
+              {
+                "name": "linker",
+                "description": "SMILES string of the organic linker, e.g. O=C(O)c1ccc(cc1)C(=O)O",
+                "type": "string"
+              },
+              {
+                "name": "metal",
+                "description": "Element symbol of the metal, e.g. Zn; one of the metals the models were trained on (as listed in instance mode)",
+                "type": "string"
+              }
+            ],
+            "example": "linker,metal\nO=C(O)c1ccc(cc1)C(=O)O,Zn\nO=C(O)c1ccc(cc1)C(=O)O,Cu\nc1cc(cc(c1)C(=O)O)C(=O)O,Fe\nO=C(O)c1cccc(c1)C(=O)O,Al\n"
           }
         },
         "outputs": {

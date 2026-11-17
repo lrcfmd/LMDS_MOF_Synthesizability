@@ -9,6 +9,7 @@ import torch
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
+from infrastructure.handler import InputError
 from infrastructure.logging import newLogger
 from model.deep import INPUT_DIM, PairsEncoder
 
@@ -45,6 +46,82 @@ LUNAR_THRESHOLD = 0.55
 DEEP_THRESHOLD = 0.86
 
 DEVICE = "cpu"
+
+# Most items listed in one error message.
+_MAX_LISTED = 5
+
+
+def _listing(items: list[str]) -> str:
+    shown = "; ".join(items[:_MAX_LISTED])
+    if len(items) > _MAX_LISTED:
+        shown += f"; and {len(items) - _MAX_LISTED} more"
+    return shown
+
+
+def smiles_problem(smiles: str) -> str | None:
+    """Why ``smiles`` can't be used as a linker, or None if it parses."""
+    if Chem.MolFromSmiles(smiles) is not None:
+        return None
+    if Chem.MolFromSmiles(smiles, sanitize=False) is not None:
+        return "chemically invalid, e.g. an atom with too many bonds or an aromatic ring that cannot be kekulised"
+    return "not valid SMILES syntax"
+
+
+def read_pairs_csv(path: Path) -> list[tuple[int, str, str]]:
+    """Read a ``linker,metal`` CSV into ``(row number, linker, metal)`` tuples.
+
+    Row numbers count the header as row 1 (as a spreadsheet shows them). Fully
+    blank rows are skipped; anything else unusable raises InputError.
+    """
+    try:
+        # utf-8-sig: tolerate the byte-order mark Excel writes.
+        with path.open(newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            fieldnames = [(n or "").strip() for n in (reader.fieldnames or [])]
+            if not any(fieldnames):
+                raise InputError(
+                    "The CSV file is empty. It needs a header row 'linker,metal' "
+                    "followed by one row per MOF."
+                )
+            missing = [c for c in ("linker", "metal") if c not in fieldnames]
+            if missing:
+                raise InputError(
+                    "The CSV must have 'linker' and 'metal' columns (comma-"
+                    f"separated, named in the first row); missing: "
+                    f"{', '.join(repr(c) for c in missing)}. Found columns: "
+                    f"{', '.join(repr(c) for c in fieldnames)}."
+                )
+            reader.fieldnames = fieldnames
+            rows, half_filled = [], []
+            for row in reader:
+                line = reader.line_num
+                linker = (row.get("linker") or "").strip()
+                metal = (row.get("metal") or "").strip()
+                if not linker and not metal:
+                    continue  # blank row
+                if not linker or not metal:
+                    empty = "linker" if not linker else "metal"
+                    half_filled.append(f"row {line} has no {empty}")
+                    continue
+                rows.append((line, linker, metal))
+    except UnicodeDecodeError:
+        raise InputError(
+            "The CSV file could not be read as text. Please save it as a "
+            "UTF-8 CSV file."
+        ) from None
+    except csv.Error as e:
+        raise InputError(f"The CSV file could not be parsed ({e}).") from None
+
+    if half_filled:
+        raise InputError(
+            f"Every row needs both a linker and a metal: {_listing(half_filled)}."
+        )
+    if not rows:
+        raise InputError(
+            "No linker/metal rows found in input file: the CSV has a header "
+            "but no data rows."
+        )
+    return rows
 
 
 class _DeepSVDD:
@@ -95,6 +172,51 @@ class MOFSynthesizabilityModel:
     def __init__(self):
         self.logger = newLogger("model")
         self._loaded = False
+        self.metal_scaled = None
+
+    def _metal_table(self) -> pd.DataFrame:
+        """The scaled metal descriptor table (small; loaded on its own so
+        metals can be checked before the heavy models are loaded)."""
+        if self.metal_scaled is None:
+            path = _artifacts_dir() / "metal_scaled.csv"
+            if not path.is_file():
+                self._load()  # raises the missing-artifacts error
+            self.metal_scaled = pd.read_csv(path).set_index("Symbol")
+        return self.metal_scaled
+
+    def supported_metals(self) -> list[str]:
+        """Metal symbols the models were trained with, alphabetically."""
+        return sorted(str(m) for m in self._metal_table().index)
+
+    def check_inputs(
+        self, pairs: list[tuple[str, str]], labels: list[str] | None = None
+    ) -> None:
+        """Raise InputError if any linker SMILES or metal symbol is unusable.
+
+        ``labels`` say where each pair came from in the message (e.g. "row 3").
+        """
+        labels = labels or [""] * len(pairs)
+        bad_smiles, bad_metals = [], []
+        supported = set(self.supported_metals())
+        lookup = {m.lower(): m for m in supported}
+        for label, (linker, metal) in zip(labels, pairs):
+            where = f"{label} " if label else ""
+            problem = smiles_problem(linker)
+            if problem:
+                bad_smiles.append(f"{where}{linker!r} is {problem}")
+            if metal not in supported:
+                if metal.lower() in lookup:
+                    why = f"is not a valid symbol (did you mean {lookup[metal.lower()]!r}?)"
+                else:
+                    why = "is not one of the metals the models were trained on"
+                bad_metals.append(f"{where}{metal!r} {why}")
+        if bad_smiles:
+            raise InputError(f"Invalid SMILES for the linker: {_listing(bad_smiles)}.")
+        if bad_metals:
+            raise InputError(
+                f"Unsupported metal: {_listing(bad_metals)}. Supported metals: "
+                f"{', '.join(self.supported_metals())}."
+            )
 
     def _load(self) -> None:
         if self._loaded:
@@ -118,20 +240,20 @@ class MOFSynthesizabilityModel:
         self.clf_lof = joblib.load(artifacts / "clf_LOF.joblib")
         self.clf_lunar = joblib.load(artifacts / "clf_LUNAR.joblib")
         self.clf_deep = _DeepSVDD(artifacts / "deep_model.tar")
-        self.metal_scaled = pd.read_csv(
-            artifacts / "metal_scaled.csv"
-        ).set_index("Symbol")
+        self._metal_table()
         self._loaded = True
 
-    def predict_one(self, linker: str, metal: str) -> dict:
-        """Score a single (linker, metal) pair with all three models."""
+    def predict_one(self, linker: str, metal: str, checked: bool = False) -> dict:
+        """Score a single (linker, metal) pair with all three models.
+
+        The inputs are checked (InputError) before the models are loaded; pass
+        ``checked=True`` if :meth:`check_inputs` has already been run.
+        """
+        if not checked:
+            self.check_inputs([(linker, metal)])
         self._load()
 
-        if metal not in self.metal_scaled.index:
-            raise ValueError(f"Unsupported metal: {metal!r}")
         mol = Chem.MolFromSmiles(linker)
-        if mol is None:
-            raise ValueError(f"Invalid SMILES: {linker!r}")
 
         canonical = Chem.MolToSmiles(mol)
         metal_feats = self.metal_scaled.loc[metal, :].to_numpy()
@@ -187,7 +309,10 @@ class MOFSynthesizabilityModel:
         linker = str(values.get("linker", "")).strip()
         metal = str(values.get("metal", "")).strip()
         if not linker or not metal:
-            raise ValueError("Both 'linker' and 'metal' must be provided")
+            raise InputError(
+                "Both 'linker' and 'metal' must be provided: give the linker's "
+                "SMILES string and the metal's element symbol."
+            )
         result = self.predict_one(linker, metal)
         logger.info(
             "scored",
@@ -202,27 +327,16 @@ class MOFSynthesizabilityModel:
         self, files: dict[str, tuple[Path, str]], output_dir: Path, logger
     ) -> dict:
         if "file" not in files:
-            raise ValueError("No input file provided")
+            raise InputError("No input file provided. Please upload a CSV file.")
         file_path, _ = files["file"]
 
-        rows = []
-        with file_path.open(newline="") as f:
-            reader = csv.DictReader(f)
-            if reader.fieldnames is None or not {"linker", "metal"} <= {
-                name.strip() for name in reader.fieldnames
-            }:
-                raise ValueError("CSV must have 'linker' and 'metal' columns")
-            for row in reader:
-                clean = {k.strip(): (v or "").strip() for k, v in row.items()}
-                if clean.get("linker") and clean.get("metal"):
-                    rows.append((clean["linker"], clean["metal"]))
-
-        if not rows:
-            raise ValueError("No linker/metal rows found in input file")
+        parsed = read_pairs_csv(file_path)
+        rows = [(linker, metal) for _, linker, metal in parsed]
+        self.check_inputs(rows, [f"row {line}" for line, _, _ in parsed])
 
         out_rows = []
         for linker, metal in rows:
-            r = self.predict_one(linker, metal)
+            r = self.predict_one(linker, metal, checked=True)
             out_rows.append({
                 "linker": r["linker"],
                 "metal": r["metal"],
